@@ -1,0 +1,53 @@
+services:
+
+  # ── One-shot watchlist runner ───────────────────────────────────────────────
+  # Runs once when started. Trigger via TrueNAS cron (see README).
+  watchlist:
+    image: momentum-watchlist:latest
+    build: .
+    container_name: momentum_watchlist
+    restart: "no"          # Change to "always" only if using internal scheduler
+
+    environment:
+      # ── Required ────────────────────────────────────────────────────────────
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+
+      EMAIL_FROM:  "${EMAIL_FROM}"          # e.g. watchlist@yourdomain.com
+      EMAIL_TO:    "${EMAIL_TO}"            # comma-separated recipients
+      SMTP_HOST:   "${SMTP_HOST}"           # e.g. smtp.gmail.com
+      SMTP_PORT:   "${SMTP_PORT:-587}"
+      SMTP_USER:   "${SMTP_USER}"
+      SMTP_PASS:   "${SMTP_PASS}"
+
+      # ── Optional: customise the watchlist ───────────────────────────────────
+      # Comma-separated tickers to scan (defaults to ~40 large-cap/growth names)
+      WATCHLIST: "${WATCHLIST:-AAPL,MSFT,NVDA,AMZN,META,TSLA,GOOGL,AMD,AVGO,QCOM,JPM,GS,V,MA,XOM,CVX,MRNA,REGN,VRTX,NFLX,UBER,PLTR,CRWD,PANW,ZS,SNOW,DDOG,MDB,SHOP,LLY}"
+
+      TOP_N: "${TOP_N:-10}"                 # how many stocks to email
+
+      # ── Optional: signal weights (must add up to ~100) ──────────────────────
+      W_SHARPE:   "${W_SHARPE:-20}"
+      W_VOLUME:   "${W_VOLUME:-18}"
+      W_BREAKOUT: "${W_BREAKOUT:-15}"
+      W_EMA:      "${W_EMA:-15}"
+      W_ATR:      "${W_ATR:-12}"
+      W_TAPE:     "${W_TAPE:-10}"
+      W_PATTERN:  "${W_PATTERN:-10}"
+
+    # Mount a volume if you want to persist logs
+    # volumes:
+    #   - /mnt/tank/watchlist/logs:/app/logs
+
+  # ── Optional: built-in cron scheduler ─────────────────────────────────────
+  # Uncomment this service if you prefer Docker-native scheduling
+  # instead of TrueNAS cron jobs.
+  #
+  # scheduler:
+  #   image: mcuadros/ofelia:latest
+  #   container_name: watchlist_scheduler
+  #   restart: always
+  #   depends_on:
+  #     - watchlist
+  #   volumes:
+  #     - /var/run/docker.sock:/var/run/docker.sock:ro
+  #     - ./ofelia.ini:/etc/ofelia/config.ini:ro

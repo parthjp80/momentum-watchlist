@@ -1,0 +1,20 @@
+# Secrets — NEVER commit these
+.env
+.schwab_token
+
+# Logs
+logs/
+*.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Docker
+.docker/
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Momentum Watchlist</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+         background:#f4f5f7; color:#1a1a2e; font-size:14px; }
+  .wrapper { max-width:680px; margin:0 auto; padding:24px 16px; }
+
+  /* Header */
+  .header { background:#0f172a; border-radius:12px 12px 0 0; padding:28px 32px; }
+  .header-top { display:flex; justify-content:space-between; align-items:flex-start; }
+  .header h1 { color:#f8fafc; font-size:22px; font-weight:600; letter-spacing:-0.3px; }
+  .header .subtitle { color:#94a3b8; font-size:13px; margin-top:4px; }
+  .header .date-badge { background:#1e293b; color:#64748b; font-size:11px;
+                        padding:4px 10px; border-radius:20px; white-space:nowrap; }
+
+  /* Summary row */
+  .summary-row { background:#1e293b; padding:16px 32px; display:flex; gap:24px;
+                 border-bottom:1px solid #334155; }
+  .stat { display:flex; flex-direction:column; gap:2px; }
+  .stat-val { color:#f8fafc; font-size:18px; font-weight:600; }
+  .stat-label { color:#64748b; font-size:11px; text-transform:uppercase; letter-spacing:.05em; }
+
+  /* Body */
+  .body { background:#ffffff; border-radius:0 0 12px 12px; overflow:hidden; }
+
+  /* Stock card */
+  .stock-card { padding:18px 24px; border-bottom:1px solid #f1f5f9; }
+  .stock-card:last-child { border-bottom:none; }
+  .stock-card:hover { background:#fafafa; }
+
+  .stock-top { display:flex; justify-content:space-between; align-items:flex-start;
+               margin-bottom:10px; }
+  .stock-left { display:flex; align-items:center; gap:12px; }
+  .rank { width:26px; height:26px; background:#f1f5f9; border-radius:50%;
+          font-size:12px; font-weight:600; color:#64748b;
+          display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+  .rank-1 { background:#fef3c7; color:#92400e; }
+  .rank-2 { background:#e0e7ff; color:#3730a3; }
+  .rank-3 { background:#d1fae5; color:#065f46; }
+
+  .ticker-block .ticker { font-size:17px; font-weight:700; color:#0f172a; }
+  .ticker-block .company { font-size:12px; color:#94a3b8; margin-top:1px; }
+  .ticker-block .sector-tag { display:inline-block; font-size:10px; padding:1px 7px;
+    border-radius:10px; background:#f1f5f9; color:#64748b; margin-top:3px; }
+
+  .stock-right { text-align:right; }
+  .price { font-size:16px; font-weight:600; color:#0f172a; }
+  .price-change { font-size:12px; margin-top:2px; }
+  .price-change.up   { color:#059669; }
+  .price-change.down { color:#dc2626; }
+
+  /* Signal badge */
+  .signal { display:inline-flex; align-items:center; gap:4px;
+            font-size:11px; font-weight:600; padding:3px 10px;
+            border-radius:20px; text-transform:uppercase; letter-spacing:.05em; }
+  .signal-strong { background:#d1fae5; color:#065f46; }
+  .signal-good   { background:#dcfce7; color:#166534; }
+  .signal-watch  { background:#fef3c7; color:#92400e; }
+  .signal-weak   { background:#fee2e2; color:#991b1b; }
+
+  /* Score bar */
+  .score-section { margin:10px 0; }
+  .score-row { display:flex; align-items:center; gap:8px; }
+  .score-label { font-size:11px; color:#94a3b8; width:110px; flex-shrink:0; }
+  .score-track { flex:1; height:5px; background:#f1f5f9; border-radius:3px; }
+  .score-fill  { height:100%; border-radius:3px; }
+  .score-num   { font-size:11px; font-weight:600; width:28px; text-align:right; }
+
+  /* Metrics */
+  .metrics-row { display:flex; gap:12px; margin:10px 0; flex-wrap:wrap; }
+  .metric { background:#f8fafc; border-radius:6px; padding:6px 10px; }
+  .metric-label { font-size:10px; color:#94a3b8; text-transform:uppercase; letter-spacing:.04em; }
+  .metric-val   { font-size:13px; font-weight:600; color:#0f172a; margin-top:1px; }
+
+  /* Signals tags */
+  .signals-row { display:flex; gap:6px; flex-wrap:wrap; margin:8px 0; }
+  .signal-tag { font-size:11px; padding:2px 8px; border-radius:4px;
+                background:#eff6ff; color:#1d4ed8; border:1px solid #bfdbfe; }
+
+  /* Notes */
+  .notes { margin-top:10px; display:flex; flex-direction:column; gap:4px; }
+  .note { font-size:12px; color:#475569; display:flex; gap:6px; }
+  .note-icon { font-size:12px; flex-shrink:0; width:16px; }
+
+  /* Overall score big */
+  .overall-score { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+  .score-big { font-size:28px; font-weight:700; }
+  .score-big.strong { color:#059669; }
+  .score-big.good   { color:#16a34a; }
+  .score-big.watch  { color:#d97706; }
+  .score-big.weak   { color:#dc2626; }
+
+  /* Footer */
+  .footer { margin-top:16px; text-align:center; color:#94a3b8; font-size:11px; }
+  .footer a { color:#6366f1; text-decoration:none; }
+
+  /* Divider */
+  .section-title { background:#f8fafc; padding:8px 24px; font-size:11px; font-weight:600;
+    text-transform:uppercase; letter-spacing:.06em; color:#94a3b8;
+    border-bottom:1px solid #f1f5f9; border-top:1px solid #f1f5f9; }
+
+  /* Trade plan */
+  .trade-plan { margin-top:14px; border:1px solid #e2e8f0; border-radius:8px; overflow:hidden; }
+  .trade-plan-header { background:#0f172a; color:#f8fafc; padding:8px 14px;
+    font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.05em;
+    display:flex; justify-content:space-between; align-items:center; }
+  .trade-plan-header .setup-type { color:#94a3b8; font-weight:400; font-size:11px; }
+  .trade-grid { display:grid; grid-template-columns:1fr 1fr; gap:0; }
+  .trade-cell { padding:10px 14px; border-bottom:1px solid #f1f5f9; }
+  .trade-cell:nth-child(odd) { border-right:1px solid #f1f5f9; }
+  .trade-cell-label { font-size:10px; color:#94a3b8; text-transform:uppercase;
+    letter-spacing:.05em; margin-bottom:4px; }
+  .trade-cell-val { font-size:13px; font-weight:600; color:#0f172a; }
+  .trade-cell-sub { font-size:11px; color:#64748b; margin-top:2px; line-height:1.5; }
+  .vol-confirm-box { background:#eff6ff; border-top:1px solid #bfdbfe;
+    padding:10px 14px; font-size:12px; color:#1e40af; }
+  .vol-confirm-box strong { display:block; margin-bottom:3px; }
+  .targets-row { display:flex; gap:0; border-top:1px solid #f1f5f9; }
+  .target-cell { flex:1; padding:10px 12px; text-align:center;
+    border-right:1px solid #f1f5f9; }
+  .target-cell:last-child { border-right:none; }
+  .target-label { font-size:10px; font-weight:600; text-transform:uppercase;
+    letter-spacing:.05em; margin-bottom:4px; }
+  .target-t1 { color:#16a34a; }
+  .target-t2 { color:#2563eb; }
+  .target-t3 { color:#7c3aed; }
+  .target-price { font-size:16px; font-weight:700; }
+  .target-rr { font-size:11px; color:#64748b; margin-top:2px; }
+  .target-rationale { font-size:10px; color:#94a3b8; margin-top:3px; line-height:1.4; }
+  .target-action { font-size:10px; color:#475569; margin-top:4px;
+    background:#f8fafc; padding:2px 6px; border-radius:4px; }
+  .invalidation-box { background:#fff7ed; border-top:1px solid #fed7aa;
+    padding:8px 14px; font-size:11px; color:#9a3412; }
+  .position-box { background:#f0fdf4; border-top:1px solid #bbf7d0;
+    padding:8px 14px; font-size:11px; color:#166534; display:flex; gap:16px; flex-wrap:wrap; }
+  .pos-stat { display:flex; flex-direction:column; gap:1px; }
+  .pos-stat-val { font-weight:600; font-size:13px; }
+  .pos-stat-label { font-size:10px; opacity:.75; }
+
+  @media (max-width:480px) {
+    .trade-grid { grid-template-columns:1fr; }
+    .trade-cell:nth-child(odd) { border-right:none; }
+    .targets-row { flex-direction:column; }
+    .target-cell { border-right:none; border-bottom:1px solid #f1f5f9; }
+  }
+</style>
+</head>
+<body>
+<div class="wrapper">
+
+  <!-- Header -->
+  <div class="header">
+    <div class="header-top">
+      <div>
+        <h1>📈 Top {{ top_n }} Momentum Stocks</h1>
+        <div class="subtitle">Daily watchlist — momentum scoring across 7 criteria</div>
+      </div>
+      <div class="date-badge">{{ date }}</div>
+    </div>
+  </div>
+
+  <!-- Summary stats -->
+  {% set strong_count = stocks | selectattr('signal', 'equalto', 'strong') | list | length %}
+  {% set avg_score = (stocks | map(attribute='overall_score') | list | sum / stocks | length) | round(0) | int %}
+  {% set avg_vol = (stocks | map(attribute='vol_ratio') | list | sum / stocks | length) | round(1) %}
+  <div class="summary-row">
+    <div class="stat">
+      <span class="stat-val">{{ scan_stats.universe }}</span>
+      <span class="stat-label">Universe scanned</span>
+    </div>
+    <div class="stat">
+      <span class="stat-val">{{ scan_stats.scanned }}</span>
+      <span class="stat-label">Stocks scored</span>
+    </div>
+    <div class="stat">
+      <span class="stat-val">{{ strong_count }}</span>
+      <span class="stat-label">Strong signals</span>
+    </div>
+    <div class="stat">
+      <span class="stat-val">{{ avg_score }}</span>
+      <span class="stat-label">Avg score</span>
+    </div>
+    <div class="stat">
+      <span class="stat-val">{{ avg_vol }}x</span>
+      <span class="stat-label">Avg vol ratio</span>
+    </div>
+  </div>
+  <div style="background:#0f172a;padding:6px 32px;font-size:11px;color:#475569;border-radius:0;">
+    Auto-discovered from: {{ scan_stats.sources }}
+  </div>
+
+  <!-- Stock list -->
+  <div class="body">
+    <div class="section-title">Ranked by momentum score</div>
+
+    {% for s in stocks %}
+    {% set sig = s.signal %}
+    {% set chg = s.price_change_pct %}
+    <div class="stock-card">
+
+      <div class="stock-top">
+        <div class="stock-left">
+          <div class="rank {% if loop.index == 1 %}rank-1{% elif loop.index == 2 %}rank-2{% elif loop.index == 3 %}rank-3{% endif %}">
+            {{ loop.index }}
+          </div>
+          <div class="ticker-block">
+            <div class="ticker">{{ s.ticker }}</div>
+            <div class="company">{{ s.companyName }}</div>
+            {% if s.sector %}<span class="sector-tag">{{ s.sector }}</span>{% endif %}
+          </div>
+        </div>
+        <div class="stock-right">
+          <div class="price">${{ "%.2f" | format(s.price) }}</div>
+          <div class="price-change {% if chg >= 0 %}up{% else %}down{% endif %}">
+            {{ '+' if chg >= 0 else '' }}{{ "%.2f" | format(chg) }}%
+          </div>
+          <div style="margin-top:4px;">
+            <span class="signal signal-{{ sig }}">{{ sig }}</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Overall score -->
+      <div class="overall-score">
+        <span class="score-big {{ sig }}">{{ s.overall_score }}</span>
+        <span style="font-size:12px;color:#94a3b8;">/100 momentum score</span>
+      </div>
+
+      <!-- Sub-scores -->
+      <div class="score-section">
+        {% set sub_labels = [
+          ('sharpe',   'Modified Sharpe'),
+          ('volume',   'Volume'),
+          ('breakout', 'Breakout'),
+          ('ema',      '9 EMA trend'),
+          ('atr',      'ATR momentum'),
+          ('tape',     'Tape reading'),
+          ('pattern',  'Tech pattern'),
+        ] %}
+        {% for key, label in sub_labels %}
+        {% set val = s.scores[key] %}
+        {% set color = '#059669' if val >= 75 else '#16a34a' if val >= 60 else '#d97706' if val >= 45 else '#dc2626' %}
+        <div class="score-row" style="margin-bottom:3px;">
+          <span class="score-label">{{ label }}</span>
+          <div class="score-track">
+            <div class="score-fill" style="width:{{ val }}%; background:{{ color }};"></div>
+          </div>
+          <span class="score-num" style="color:{{ color }};">{{ val }}</span>
+        </div>
+        {% endfor %}
+      </div>
+
+      <!-- Metrics -->
+      <div class="metrics-row">
+        <div class="metric">
+          <div class="metric-label">Vol ratio</div>
+          <div class="metric-val">{{ s.vol_ratio }}x</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">ATR %</div>
+          <div class="metric-val">{{ s.atr_pct }}%</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">vs 20d high</div>
+          <div class="metric-val">{{ '+' if s.breakout_pct >= 0 else '' }}{{ "%.1f" | format(s.breakout_pct) }}%</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">EMA slope</div>
+          <div class="metric-val">{{ '+' if s.ema9_slope >= 0 else '' }}{{ "%.2f" | format(s.ema9_slope) }}%</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">52w range</div>
+          <div class="metric-val">{{ "%.0f" | format(s.range_pct) }}th %</div>
+        </div>
+      </div>
+
+      <!-- Active signals -->
+      {% if s.activeSignals %}
+      <div class="signals-row">
+        {% for sig_tag in s.activeSignals %}
+        <span class="signal-tag">{{ sig_tag }}</span>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      <!-- Notes -->
+      <div class="notes">
+        {% if s.catalyst %}
+        <div class="note"><span class="note-icon">⚡</span><span><strong>Catalyst:</strong> {{ s.catalyst }}</span></div>
+        {% endif %}
+        {% if s.entryNote %}
+        <div class="note"><span class="note-icon">📍</span><span><strong>Entry:</strong> {{ s.entryNote }}</span></div>
+        {% endif %}
+        {% if s.keyRisk %}
+        <div class="note"><span class="note-icon">⚠️</span><span><strong>Risk:</strong> {{ s.keyRisk }}</span></div>
+        {% endif %}
+      </div>
+
+      <!-- Trade plan -->
+      {% if s.tradePlan %}
+      {% set tp = s.tradePlan %}
+      {% set entry = tp.entry or {} %}
+      {% set sl = tp.stopLoss or {} %}
+      {% set ps = tp.positionSizing or {} %}
+      {% set vc = tp.volumeConfirmation or {} %}
+      <div class="trade-plan">
+
+        <div class="trade-plan-header">
+          <span>📊 Trade Plan</span>
+          <span class="setup-type">{{ tp.setupType }} &bull; {{ tp.timeHorizon }}</span>
+        </div>
+
+        <!-- Volume confirmation — most prominent since user requested it -->
+        <div class="vol-confirm-box">
+          <strong>🔔 Volume Confirmation Required</strong>
+          {{ vc.minimumVolume }}<br>
+          {% if vc.volumePattern %}<span style="opacity:.8;">{{ vc.volumePattern }}</span>{% endif %}
+          {% if vc.tapeSigns %}<br><span style="opacity:.75;font-style:italic;">Tape: {{ vc.tapeSigns }}</span>{% endif %}
+        </div>
+
+        <!-- Entry + Stop side by side -->
+        <div class="trade-grid">
+          <div class="trade-cell">
+            <div class="trade-cell-label">▶ Entry trigger</div>
+            <div class="trade-cell-val" style="color:#059669;">${{ entry.triggerPrice }}</div>
+            <div class="trade-cell-sub">{{ entry.triggerCondition }}</div>
+            {% if entry.alternateEntry %}
+            <div class="trade-cell-sub" style="margin-top:4px;color:#2563eb;">
+              Alt: {{ entry.alternateEntry }}
+            </div>
+            {% endif %}
+          </div>
+          <div class="trade-cell">
+            <div class="trade-cell-label">🛑 Stop loss</div>
+            <div class="trade-cell-val" style="color:#dc2626;">${{ sl.hardStop }}</div>
+            <div class="trade-cell-sub">{{ sl.hardStopRationale }}</div>
+            {% if sl.trailingStop %}
+            <div class="trade-cell-sub" style="margin-top:4px;">Trail: {{ sl.trailingStop }}</div>
+            {% endif %}
+          </div>
+        </div>
+
+        <!-- Price targets -->
+        <div class="targets-row">
+          {% for t in tp.targets %}
+          {% set tc = 'target-t1' if t.label == 'T1' else ('target-t2' if t.label == 'T2' else 'target-t3') %}
+          <div class="target-cell">
+            <div class="target-label {{ tc }}">🎯 {{ t.label }}</div>
+            <div class="target-price" style="color:{% if t.label=='T1' %}#16a34a{% elif t.label=='T2' %}#2563eb{% else %}#7c3aed{% endif %};">
+              ${{ t.price }}
+            </div>
+            <div class="target-rr">{{ t.riskReward }} R:R</div>
+            <div class="target-rationale">{{ t.rationale }}</div>
+            {% if t.action %}<div class="target-action">{{ t.action }}</div>{% endif %}
+          </div>
+          {% endfor %}
+        </div>
+
+        <!-- Position sizing -->
+        {% if ps %}
+        <div class="position-box">
+          <div class="pos-stat">
+            <span class="pos-stat-val">{{ ps.portfolioRiskPct }}%</span>
+            <span class="pos-stat-label">Portfolio risk</span>
+          </div>
+          <div class="pos-stat">
+            <span class="pos-stat-val">{{ ps.sharesFor100kAccount }}</span>
+            <span class="pos-stat-label">Shares ($100k acct)</span>
+          </div>
+          <div class="pos-stat">
+            <span class="pos-stat-val">${{ ps.dollarExposure }}</span>
+            <span class="pos-stat-label">Dollar exposure</span>
+          </div>
+          <div class="pos-stat">
+            <span class="pos-stat-val">{{ ps.portfolioPct }}%</span>
+            <span class="pos-stat-label">% of portfolio</span>
+          </div>
+          {% if sl.maxRiskDollars %}
+          <div class="pos-stat">
+            <span class="pos-stat-val">${{ sl.maxRiskDollars }}</span>
+            <span class="pos-stat-label">Max $ at risk</span>
+          </div>
+          {% endif %}
+        </div>
+        {% endif %}
+
+        <!-- Invalidation -->
+        {% if tp.invalidation %}
+        <div class="invalidation-box">
+          ❌ <strong>Setup invalidated if:</strong> {{ tp.invalidation }}
+        </div>
+        {% endif %}
+
+        <!-- Additional notes -->
+        {% if tp.additionalNotes %}
+        <div style="padding:8px 14px;font-size:11px;color:#64748b;border-top:1px solid #f1f5f9;background:#fafafa;">
+          💡 {{ tp.additionalNotes }}
+        </div>
+        {% endif %}
+
+      </div>
+      {% endif %}
+
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="footer">
+    <p>Generated by Momentum Watchlist Builder &bull; Signal weights: Sharpe {{ weights.sharpe }}% · Volume {{ weights.volume }}% · Breakout {{ weights.breakout }}% · EMA {{ weights.ema }}% · ATR {{ weights.atr }}% · Tape {{ weights.tape }}% · Pattern {{ weights.pattern }}%</p>
+    <p style="margin-top:4px;color:#cbd5e1;">This is not financial advice. Always do your own research.</p>
+  </div>
+
+</div>
+</body>
+</html>
