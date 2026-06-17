@@ -32,6 +32,7 @@ import logging
 import smtplib
 import requests
 import anthropic
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import yfinance as yf
 import numpy as np
 import pandas as pd
@@ -369,199 +370,93 @@ def score_stock(d: dict) -> dict:
 
 
 # ════════════════════════════════════════════════════════════════════════════
-# STAGE 5 — CLAUDE AI ENRICHMENT WITH LIVE WEB SEARCH
+# STAGE 5 — CLAUDE AI ENRICHMENT + TRADE PLANS (single combined call)
 # ════════════════════════════════════════════════════════════════════════════
 
 def enrich_with_claude(top_stocks: list) -> list:
+    """Merged enrichment: catalysts + trade plans in one Claude call to save ~2 min."""
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     today  = datetime.now().strftime("%A, %B %d, %Y")
 
-    summaries = [{
-        "ticker": s["ticker"], "price": s["price"],
-        "price_change": s["price_change_pct"], "overall_score": s["overall_score"],
-        "signal": s["signal"], "vol_ratio": s["vol_ratio"],
-        "above_ema9": s["above_ema9"], "ema9_slope": s["ema9_slope"],
-        "atr_pct": s["atr_pct"], "breakout_pct": s["breakout_pct"],
-        "scores": s["scores"],
-    } for s in top_stocks]
-
-    prompt = f"""Today is {today}. You are a quantitative momentum analyst with live web access.
-
-These stocks were algorithmically selected as today's top momentum picks using
-Modified Sharpe ratio, volume analysis, EMA trend, ATR momentum, and breakout signals:
-
-{json.dumps(summaries, indent=2)}
-
-Use web search to find the latest news and catalysts for each ticker, then respond
-ONLY with a JSON array (no markdown, no preamble, no extra text):
-[
-  {{
-    "ticker": "AAPL",
-    "companyName": "Apple Inc.",
-    "sector": "Technology",
-    "catalyst": "one sentence: current news catalyst or market driver based on today's news",
-    "entryNote": "specific actionable entry note for a trader today (price levels, conditions)",
-    "keyRisk": "one sentence key risk or reason for caution",
-    "activeSignals": ["signal 1 with specifics", "signal 2 with specifics", "signal 3 with specifics"]
-  }}
-]
-
-Be specific with price levels and realistic. Use web_search for each ticker before responding."""
-
-    try:
-        messages_hist = [{"role": "user", "content": prompt}]
-        while True:
-            response = client.messages.create(
-                model="claude-sonnet-4-6",
-                max_tokens=3000,
-                tools=[{"type": "web_search_20250305", "name": "web_search"}],
-                messages=messages_hist,
-            )
-            messages_hist.append({"role": "assistant", "content": response.content})
-            if response.stop_reason in ("end_turn", None):
-                break
-            if response.stop_reason != "tool_use":
-                break
-        raw = "".join(b.text for b in response.content if hasattr(b, "text"))
-    except Exception as e:
-        log.warning(f"Claude enrichment failed: {e}")
-        raw = "[]"
-
-    clean = raw.replace("```json", "").replace("```", "").strip()
-    try:
-        enrichments = json.loads(clean[clean.index("["):clean.rindex("]")+1])
-    except Exception:
-        enrichments = []
-
-    emap = {e["ticker"]: e for e in enrichments}
-    for s in top_stocks:
-        e = emap.get(s["ticker"], {})
-        s["companyName"]   = e.get("companyName", s["ticker"])
-        s["sector"]        = e.get("sector", "")
-        s["catalyst"]      = e.get("catalyst", "No catalyst data")
-        s["entryNote"]     = e.get("entryNote", "Monitor for volume confirmation entry")
-        s["keyRisk"]       = e.get("keyRisk", "")
-        s["activeSignals"] = e.get("activeSignals", [])
-    return top_stocks
-
-
-# ════════════════════════════════════════════════════════════════════════════
-# STAGE 5b — TRADE PLAN: ENTRY, STOP, TARGETS, VOLUME CONFIRMATION
-# ════════════════════════════════════════════════════════════════════════════
-
-def generate_trade_plans(top_stocks: list) -> list:
-    """
-    For each of the top stocks, generate a detailed trade plan including:
-      - Volume confirmation entry condition (specific volume threshold)
-      - Entry trigger price (exact level to enter)
-      - Stop loss (hard stop + trailing stop logic)
-      - Price targets: T1 (conservative), T2 (base), T3 (extended)
-      - Risk/reward ratio
-      - Position sizing guidance (% of portfolio, max risk)
-      - Time horizon
-      - Invalidation condition (when the setup is no longer valid)
-    Uses web_search to check current intraday levels and news.
-    """
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    today  = datetime.now().strftime("%A, %B %d, %Y")
-
-    trade_inputs = [{
+    stock_data = [{
         "ticker":        s["ticker"],
-        "companyName":   s.get("companyName", s["ticker"]),
         "price":         s["price"],
         "price_change":  s["price_change_pct"],
+        "overall_score": s["overall_score"],
+        "signal":        s["signal"],
+        "vol_ratio":     s["vol_ratio"],
+        "above_ema9":    s["above_ema9"],
+        "ema9_slope":    s["ema9_slope"],
+        "atr_pct":       s["atr_pct"],
+        "breakout_pct":  s["breakout_pct"],
         "high_20":       s["high_20"],
         "high_52w":      s["high_52w"],
         "low_52w":       s["low_52w"],
         "ema9":          s["ema9"],
-        "ema9_slope":    s["ema9_slope"],
-        "atr_pct":       s["atr_pct"],
-        "vol_ratio":     s["vol_ratio"],
         "avg_vol_20":    s["avg_vol_20"],
-        "above_ema9":    s["above_ema9"],
-        "breakout_pct":  s["breakout_pct"],
-        "overall_score": s["overall_score"],
-        "signal":        s["signal"],
-        "catalyst":      s.get("catalyst", ""),
-        "activeSignals": s.get("activeSignals", []),
+        "scores":        s["scores"],
     } for s in top_stocks]
 
-    prompt = f"""Today is {today}. You are an expert momentum trader and risk manager.
+    prompt = f"""Today is {today}. You are a quantitative momentum analyst and expert trader with live web access.
 
-You have been given the top {len(top_stocks)} momentum stocks selected algorithmically today.
-Use web search to check current price levels and recent chart structure for each, then generate
-a precise trade plan for each stock.
+These stocks were algorithmically selected as today's top momentum picks:
 
-Stock data:
-{json.dumps(trade_inputs, indent=2)}
+{json.dumps(stock_data, indent=2)}
 
-CRITICAL INSTRUCTIONS:
-- Volume confirmation entry: specify the EXACT volume threshold (e.g. "Enter only if 5-min bar volume > 1.5x its 10-bar avg") 
-- Entry price: give a specific dollar level or condition (e.g. "$213.50 breakout above morning high with volume")
-- Stop loss: give a specific dollar level based on ATR or key support (NOT a generic percentage)
-- Targets T1/T2/T3: use ATR multiples, prior resistance levels, or round numbers — be specific with dollar prices
-- Risk/reward: calculate actual R:R ratio for each target
-- Position size: give a concrete % of portfolio for a $100k account example
-- Time horizon: intraday, swing (2-5 days), or positional (1-3 weeks)
-- Invalidation: the exact price or condition that kills the setup
+Use web_search to find the latest news for each ticker, then respond ONLY with a single JSON object
+(no markdown, no preamble, no extra text) in this exact structure:
 
-Respond ONLY with a JSON array (no markdown, no preamble):
-[
-  {{
-    "ticker": "AAPL",
-    "setupType": "Momentum breakout / Flag continuation / EMA bounce / Volume surge",
-    "timeHorizon": "Swing (2-5 days)",
-    "volumeConfirmation": {{
-      "minimumVolume": "Entry bar must show > 2x average 10-day volume (> 120M shares)",
-      "volumePattern": "Look for accelerating volume on 5-min bars as price approaches entry",
-      "tapeSigns": "Watch for large bid stacking at entry level, minimal ask pressure"
-    }},
-    "entry": {{
-      "triggerPrice": 214.50,
-      "triggerCondition": "Break and close above $214.50 (20-day high) on 5-min chart with volume > 1.5x avg",
-      "entryType": "Breakout",
-      "alternateEntry": "Pullback to 9 EMA (~$211.20) on declining volume for lower-risk entry"
-    }},
-    "stopLoss": {{
-      "hardStop": 209.80,
-      "hardStopRationale": "Below 2x ATR ($2.10) from entry and under 9 EMA — momentum invalidated",
-      "trailingStop": "Trail stop to breakeven once T1 hit; trail by 1 ATR below each new daily high thereafter",
-      "maxRiskDollars": 470,
-      "maxRiskPct": 2.2
-    }},
-    "targets": [
-      {{
-        "label": "T1",
-        "price": 218.50,
-        "rationale": "1.5x ATR extension from entry, prior intraday resistance",
-        "riskReward": "1.9:1",
-        "action": "Take 40% off position, move stop to breakeven"
+{{
+  "enrichments": [
+    {{
+      "ticker": "AAPL",
+      "companyName": "Apple Inc.",
+      "sector": "Technology",
+      "catalyst": "one sentence: current news catalyst or market driver based on today's news",
+      "entryNote": "specific actionable entry note for a trader today (price levels, conditions)",
+      "keyRisk": "one sentence key risk or reason for caution",
+      "activeSignals": ["signal 1 with specifics", "signal 2", "signal 3"]
+    }}
+  ],
+  "tradePlans": [
+    {{
+      "ticker": "AAPL",
+      "setupType": "Momentum breakout / Flag continuation / EMA bounce / Volume surge",
+      "timeHorizon": "Swing (2-5 days)",
+      "volumeConfirmation": {{
+        "minimumVolume": "Entry bar must show > 2x average 10-day volume (> 120M shares)",
+        "volumePattern": "Look for accelerating volume on 5-min bars as price approaches entry",
+        "tapeSigns": "Watch for large bid stacking at entry level, minimal ask pressure"
       }},
-      {{
-        "label": "T2",
-        "price": 223.00,
-        "rationale": "3x ATR extension, measured move from flag base",
-        "riskReward": "4.0:1",
-        "action": "Take another 40% off position, trail remaining"
+      "entry": {{
+        "triggerPrice": 214.50,
+        "triggerCondition": "Break and close above $214.50 (20-day high) on 5-min chart with volume > 1.5x avg",
+        "entryType": "Breakout",
+        "alternateEntry": "Pullback to 9 EMA (~$211.20) on declining volume for lower-risk entry"
       }},
-      {{
-        "label": "T3",
-        "price": 230.00,
-        "rationale": "Extended target at prior all-time high / round number resistance",
-        "riskReward": "7.2:1",
-        "action": "Final 20% — let it run with trailing stop"
-      }}
-    ],
-    "positionSizing": {{
-      "portfolioRiskPct": 1.0,
-      "sharesFor100kAccount": 21,
-      "dollarExposure": 4505,
-      "portfolioPct": 4.5
-    }},
-    "invalidation": "Setup fails if price closes below $209.80 or volume dries up below 0.8x average on any breakout attempt",
-    "additionalNotes": "Any extra context on timing, news events to watch, or sector tailwinds"
-  }}
-]
+      "stopLoss": {{
+        "hardStop": 209.80,
+        "hardStopRationale": "Below 2x ATR from entry and under 9 EMA — momentum invalidated",
+        "trailingStop": "Trail stop to breakeven once T1 hit; trail by 1 ATR below each new daily high",
+        "maxRiskDollars": 470,
+        "maxRiskPct": 2.2
+      }},
+      "targets": [
+        {{"label": "T1", "price": 218.50, "rationale": "1.5x ATR extension", "riskReward": "1.9:1", "action": "Take 40% off, move stop to breakeven"}},
+        {{"label": "T2", "price": 223.00, "rationale": "3x ATR extension", "riskReward": "4.0:1", "action": "Take another 40% off, trail remaining"}},
+        {{"label": "T3", "price": 230.00, "rationale": "Prior resistance / round number", "riskReward": "7.2:1", "action": "Final 20% — let it run"}}
+      ],
+      "positionSizing": {{
+        "portfolioRiskPct": 1.0,
+        "sharesFor100kAccount": 21,
+        "dollarExposure": 4505,
+        "portfolioPct": 4.5
+      }},
+      "invalidation": "Setup fails if price closes below hard stop or volume dries up below 0.8x avg on breakout attempt",
+      "additionalNotes": "Any extra context on timing, news events, sector tailwinds"
+    }}
+  ]
+}}
 
 Use real ATR values and actual price levels from the data provided. Be precise — traders will use these numbers."""
 
@@ -581,45 +476,35 @@ Use real ATR values and actual price levels from the data provided. Be precise �
                 break
         raw = "".join(b.text for b in response.content if hasattr(b, "text"))
     except Exception as e:
-        log.warning(f"Trade plan generation failed: {e}")
-        raw = "[]"
+        log.warning(f"Claude enrichment failed: {e}")
+        raw = "{}"
 
     clean = raw.replace("```json", "").replace("```", "").strip()
     try:
-        # Find the JSON array — recover partial results if truncated
-        start = clean.index("[")
-        # Try full parse first
-        try:
-            plans = json.loads(clean[start:clean.rindex("]") + 1])
-        except json.JSONDecodeError:
-            # Truncated — extract complete objects one by one
-            import re as _re
-            plans = []
-            depth, obj_start = 0, None
-            for i, ch in enumerate(clean[start:], start):
-                if ch == "{":
-                    if depth == 1:
-                        obj_start = i
-                    depth += 1
-                elif ch == "}":
-                    depth -= 1
-                    if depth == 1 and obj_start is not None:
-                        try:
-                            plans.append(json.loads(clean[obj_start:i+1]))
-                        except Exception:
-                            pass
-                        obj_start = None
-            log.warning(f"Trade plan JSON truncated — recovered {len(plans)} complete objects")
+        parsed = json.loads(clean[clean.index("{"):clean.rindex("}")+1])
     except Exception as e:
-        log.warning(f"Trade plan JSON parse failed: {e}")
-        plans = []
+        log.warning(f"Claude enrichment JSON parse failed: {e}")
+        parsed = {}
 
-    plan_map = {p["ticker"]: p for p in plans}
+    enrichments = parsed.get("enrichments", [])
+    trade_plans  = parsed.get("tradePlans", [])
+
+    emap = {e["ticker"]: e for e in enrichments}
+    pmap = {p["ticker"]: p for p in trade_plans}
+
     for s in top_stocks:
-        s["tradePlan"] = plan_map.get(s["ticker"], None)
+        e = emap.get(s["ticker"], {})
+        s["companyName"]   = e.get("companyName", s["ticker"])
+        s["sector"]        = e.get("sector", "")
+        s["catalyst"]      = e.get("catalyst", "No catalyst data")
+        s["entryNote"]     = e.get("entryNote", "Monitor for volume confirmation entry")
+        s["keyRisk"]       = e.get("keyRisk", "")
+        s["activeSignals"] = e.get("activeSignals", [])
+        s["tradePlan"]     = pmap.get(s["ticker"], None)
 
-    log.info(f"Trade plans generated for {len(plans)}/{len(top_stocks)} stocks")
+    log.info(f"Enriched {len(emap)}/{len(top_stocks)} | Trade plans {len(pmap)}/{len(top_stocks)}")
     return top_stocks
+
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -691,29 +576,38 @@ def run():
     # 1. Discover
     candidates = discover_candidates()
 
-    # 2. Liquidity filter
+    # 2. Liquidity filter — parallel with 20 workers
     log.info(f"\n=== STAGE 2: Liquidity filter ({len(candidates)} candidates) ===")
+    cap = candidates[: MAX_CANDIDATES * 3]
+    liquid_set = set()
     liquid = []
-    for i, t in enumerate(candidates):
-        if len(liquid) >= MAX_CANDIDATES:
-            break
-        if passes_liquidity(t):
-            liquid.append(t)
-        if (i + 1) % 25 == 0:
-            log.info(f"  Checked {i+1}/{len(candidates)} → {len(liquid)} passed")
-        time.sleep(0.1)
+    with ThreadPoolExecutor(max_workers=20) as ex:
+        futs = {ex.submit(passes_liquidity, t): t for t in cap}
+        done = 0
+        for fut in as_completed(futs):
+            t = futs[fut]
+            done += 1
+            if fut.result():
+                liquid_set.add(t)
+            if done % 50 == 0:
+                log.info(f"  Checked {done}/{len(cap)} → {len(liquid_set)} passed")
+    # Preserve original discovery order
+    liquid = [t for t in cap if t in liquid_set][:MAX_CANDIDATES]
     log.info(f"  → {len(liquid)} liquid candidates")
 
-    # 3+4. Score
+    # 3+4. Score — parallel with 15 workers
     log.info(f"\n=== STAGE 3+4: Scoring {len(liquid)} candidates ===")
     results = []
-    for i, ticker in enumerate(liquid):
-        data = fetch_ticker_data(ticker)
-        if data:
-            results.append(score_stock(data))
-        if (i + 1) % 20 == 0:
-            log.info(f"  [{i+1}/{len(liquid)}] scored: {len(results)}")
-        time.sleep(0.2)
+    with ThreadPoolExecutor(max_workers=15) as ex:
+        futs = {ex.submit(fetch_ticker_data, t): t for t in liquid}
+        done = 0
+        for fut in as_completed(futs):
+            done += 1
+            data = fut.result()
+            if data:
+                results.append(score_stock(data))
+            if done % 20 == 0:
+                log.info(f"  [{done}/{len(liquid)}] scored: {len(results)}")
 
     if not results:
         log.error("No stocks scored — check network connectivity and API access")
@@ -730,13 +624,9 @@ def run():
         "sources":  "S&P 500 + NASDAQ-100 + QQQ/XLK/ARKK/IJR holdings + day movers",
     }
 
-    # 5. Enrich
-    log.info("\n=== STAGE 5a: Claude AI enrichment with web search ===")
+    # 5. Enrich + trade plans (single combined call)
+    log.info("\n=== STAGE 5: Claude AI enrichment + trade plans ===")
     top = enrich_with_claude(top)
-
-    # 5b. Trade plans
-    log.info("\n=== STAGE 5b: Generating trade plans (entry/stop/targets/volume) ===")
-    top = generate_trade_plans(top)
 
     # 6. Email
     log.info("\n=== STAGE 6: Sending email ===")
