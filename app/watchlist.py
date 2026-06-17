@@ -386,7 +386,7 @@ Be specific with price levels and realistic. Use web_search for each ticker befo
         messages_hist = [{"role": "user", "content": prompt}]
         while True:
             response = client.messages.create(
-                model="claude-sonnet-4-20250514",
+                model="claude-sonnet-4-6",
                 max_tokens=3000,
                 tools=[{"type": "web_search_20250305", "name": "web_search"}],
                 messages=messages_hist,
@@ -543,7 +543,7 @@ Use real ATR values and actual price levels from the data provided. Be precise â
         messages_hist = [{"role": "user", "content": prompt}]
         while True:
             response = client.messages.create(
-                model="claude-sonnet-4-20250514",
+                model="claude-sonnet-4-6",
                 max_tokens=6000,
                 tools=[{"type": "web_search_20250305", "name": "web_search"}],
                 messages=messages_hist,
