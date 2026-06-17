@@ -163,7 +163,7 @@ def get_etf_holdings(etf: str, max_h: int = 25) -> list:
 def get_yf_screen_movers() -> list:
     """Use yfinance built-in screen for most-actives as a fallback source."""
     try:
-        result = yf.screen("most_actives", size=50)
+        result = yf.screen("most_actives", count=50)
         if result and "quotes" in result:
             return [q["symbol"] for q in result["quotes"] if q.get("symbol")]
     except Exception:
