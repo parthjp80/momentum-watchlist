@@ -84,46 +84,54 @@ HEADERS = {
 # STAGE 1 — DISCOVER CANDIDATES
 # ════════════════════════════════════════════════════════════════════════════
 
+# NASDAQ-100 components (as of Q2 2026 rebalance) — fallback if live fetch fails
+_NDX100_FALLBACK = [
+    "AAPL","MSFT","NVDA","AMZN","META","TSLA","GOOGL","GOOG","AVGO","COST",
+    "NFLX","TMUS","AMD","PEP","LIN","CSCO","ADBE","QCOM","TXN","AMGN",
+    "INTU","ISRG","CMCSA","BKNG","MU","HON","AMAT","VRTX","ADP","PANW",
+    "SBUX","ADI","GILD","LRCX","MELI","MDLZ","INTC","REGN","KLAC","SNPS",
+    "CDNS","CEG","CTAS","PYPL","CSX","ORLY","MRNA","NXPI","MRVL","PCAR",
+    "ABNB","FTNT","CRWD","MNST","KDP","ODFL","ROST","IDXX","DXCM","FAST",
+    "AZN","CTSH","EA","WBD","BIIB","FANG","GEHC","ON","EXC","XEL",
+    "TEAM","ZS","ANSS","VRSK","DLTR","DDOG","CSGP","GFS","TTD","TTWO",
+    "SIRI","ILMN","WBA","ALGN","LCID","ENPH","ZM","RIVN","DASH","EBAY",
+    "MCHP","CPRT","PAYX","CHTR","PDD","ASML","ARM","CCEP","CDW","SMCI",
+]
+
 def get_sp500() -> list:
-    # iShares IVV (S&P 500 ETF) CSV feed — avoids Wikipedia 403s
-    import io
-    url = ("https://www.ishares.com/us/products/239726/ishares-core-sp-500-etf/"
-           "1467271812596.ajax?fileType=csv&fileName=IVV_holdings&dataType=fund")
+    # GitHub-hosted S&P 500 constituents CSV (reliable, no bot detection)
+    url = ("https://raw.githubusercontent.com/datasets/s-and-p-500-companies"
+           "/main/data/constituents.csv")
     try:
         resp = requests.get(url, headers=HEADERS, timeout=15)
         resp.raise_for_status()
-        lines = resp.text.splitlines()
-        start = next(i for i, l in enumerate(lines) if l.startswith("Ticker,"))
-        df = pd.read_csv(io.StringIO("\n".join(lines[start:])), on_bad_lines="skip")
-        tickers = [str(t).replace(".", "-") for t in df["Ticker"].dropna()
-                   if re.match(r'^[A-Z]{1,5}$', str(t))]
+        import io
+        df = pd.read_csv(io.StringIO(resp.text))
+        tickers = [str(t).replace(".", "-") for t in df["Symbol"].dropna()
+                   if re.match(r"^[A-Z]{1,5}$", str(t).replace(".", ""))]
+        log.info(f"  S&P 500 GitHub: {len(tickers)} tickers")
         return tickers
     except Exception as e:
-        log.warning(f"SP500 (iShares) fetch failed: {e}")
+        log.warning(f"SP500 (GitHub) fetch failed: {e}")
         return []
 
 
 def get_nasdaq100() -> list:
-    # Invesco QQQ holdings CSV feed — avoids Wikipedia 403s
-    import io
-    url = ("https://www.invesco.com/us/financial-products/etfs/holdings/main/holdings/0"
-           "?audienceType=Investor&action=download&ticker=QQQ")
+    # Wikipedia NASDAQ-100 with retries + fallback to hardcoded list
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=15)
-        resp.raise_for_status()
-        lines = resp.text.splitlines()
-        start = next(i for i, l in enumerate(lines)
-                     if any(k in l for k in ("Holding Ticker", "Name,")))
-        df = pd.read_csv(io.StringIO("\n".join(lines[start:])), on_bad_lines="skip")
-        col = next((c for c in df.columns if "Ticker" in c or "Symbol" in c), None)
-        if col is None:
-            raise ValueError(f"No ticker column. Columns: {df.columns.tolist()}")
-        tickers = [str(t).strip() for t in df[col].dropna()
-                   if re.match(r'^[A-Z]{1,5}$', str(t).strip())]
-        return tickers
-    except Exception as e:
-        log.warning(f"NASDAQ-100 (Invesco) fetch failed: {e}")
-        return []
+        tables = pd.read_html(
+            "https://en.wikipedia.org/wiki/Nasdaq-100",
+            attrs={"id": "constituents"},
+            storage_options={"User-Agent": HEADERS["User-Agent"]},
+        )
+        tickers = tables[0]["Ticker"].dropna().tolist()
+        if len(tickers) > 50:
+            log.info(f"  NASDAQ-100 Wikipedia: {len(tickers)} tickers")
+            return tickers
+    except Exception:
+        pass
+    log.warning("NASDAQ-100 Wikipedia failed — using hardcoded fallback list")
+    return _NDX100_FALLBACK
 
 
 def get_yahoo_movers(screener: str, count: int = 25) -> list:
