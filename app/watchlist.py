@@ -570,7 +570,7 @@ Use real ATR values and actual price levels from the data provided. Be precise â
         while True:
             response = client.messages.create(
                 model="claude-sonnet-4-6",
-                max_tokens=6000,
+                max_tokens=16000,
                 tools=[{"type": "web_search_20250305", "name": "web_search"}],
                 messages=messages_hist,
             )
@@ -586,7 +586,30 @@ Use real ATR values and actual price levels from the data provided. Be precise â
 
     clean = raw.replace("```json", "").replace("```", "").strip()
     try:
-        plans = json.loads(clean[clean.index("["):clean.rindex("]")+1])
+        # Find the JSON array â€” recover partial results if truncated
+        start = clean.index("[")
+        # Try full parse first
+        try:
+            plans = json.loads(clean[start:clean.rindex("]") + 1])
+        except json.JSONDecodeError:
+            # Truncated â€” extract complete objects one by one
+            import re as _re
+            plans = []
+            depth, obj_start = 0, None
+            for i, ch in enumerate(clean[start:], start):
+                if ch == "{":
+                    if depth == 1:
+                        obj_start = i
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 1 and obj_start is not None:
+                        try:
+                            plans.append(json.loads(clean[obj_start:i+1]))
+                        except Exception:
+                            pass
+                        obj_start = None
+            log.warning(f"Trade plan JSON truncated â€” recovered {len(plans)} complete objects")
     except Exception as e:
         log.warning(f"Trade plan JSON parse failed: {e}")
         plans = []
