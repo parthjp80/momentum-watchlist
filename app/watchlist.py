@@ -383,12 +383,19 @@ ONLY with a JSON array (no markdown, no preamble, no extra text):
 Be specific with price levels and realistic. Use web_search for each ticker before responding."""
 
     try:
-        response = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=3000,
-            tools=[{"type": "web_search_20250305", "name": "web_search"}],
-            messages=[{"role": "user", "content": prompt}]
-        )
+        messages_hist = [{"role": "user", "content": prompt}]
+        while True:
+            response = client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=3000,
+                tools=[{"type": "web_search_20250305", "name": "web_search"}],
+                messages=messages_hist,
+            )
+            messages_hist.append({"role": "assistant", "content": response.content})
+            if response.stop_reason in ("end_turn", None):
+                break
+            if response.stop_reason != "tool_use":
+                break
         raw = "".join(b.text for b in response.content if hasattr(b, "text"))
     except Exception as e:
         log.warning(f"Claude enrichment failed: {e}")
@@ -533,12 +540,19 @@ Respond ONLY with a JSON array (no markdown, no preamble):
 Use real ATR values and actual price levels from the data provided. Be precise — traders will use these numbers."""
 
     try:
-        response = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=6000,
-            tools=[{"type": "web_search_20250305", "name": "web_search"}],
-            messages=[{"role": "user", "content": prompt}]
-        )
+        messages_hist = [{"role": "user", "content": prompt}]
+        while True:
+            response = client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=6000,
+                tools=[{"type": "web_search_20250305", "name": "web_search"}],
+                messages=messages_hist,
+            )
+            messages_hist.append({"role": "assistant", "content": response.content})
+            if response.stop_reason in ("end_turn", None):
+                break
+            if response.stop_reason != "tool_use":
+                break
         raw = "".join(b.text for b in response.content if hasattr(b, "text"))
     except Exception as e:
         log.warning(f"Trade plan generation failed: {e}")
