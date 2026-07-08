@@ -57,7 +57,7 @@ SMTP_PORT         = int(os.environ.get("SMTP_PORT", "587"))
 SMTP_USER         = os.environ["SMTP_USER"]
 SMTP_PASS         = os.environ["SMTP_PASS"]
 
-TOP_N          = int(os.environ.get("TOP_N", "10"))
+TOP_N          = int(os.environ.get("TOP_N", "5"))
 MIN_PRICE      = float(os.environ.get("MIN_PRICE", "5"))
 MIN_AVG_VOL    = float(os.environ.get("MIN_AVG_VOLUME", "500000"))
 MAX_CANDIDATES = int(os.environ.get("MAX_CANDIDATES", "200"))
@@ -72,6 +72,9 @@ WEIGHTS = {
     "pattern":  float(os.environ.get("W_PATTERN",  "10")),
 }
 
+CACHE_DIR = "/tmp/watchlist_cache"
+os.makedirs(CACHE_DIR, exist_ok=True)
+
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -79,6 +82,31 @@ HEADERS = {
         "Chrome/124.0 Safari/537.36"
     )
 }
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# CACHE HELPERS — universe lists cached for 7 days to avoid repeat fetches
+# ════════════════════════════════════════════════════════════════════════════
+
+def _cache_get(key: str, max_age_days: int = 7) -> list | None:
+    path = os.path.join(CACHE_DIR, f"{key}.json")
+    try:
+        if os.path.exists(path):
+            age = (datetime.now().timestamp() - os.path.getmtime(path)) / 86400
+            if age < max_age_days:
+                with open(path) as f:
+                    return json.load(f)
+    except Exception:
+        pass
+    return None
+
+def _cache_set(key: str, data: list) -> None:
+    path = os.path.join(CACHE_DIR, f"{key}.json")
+    try:
+        with open(path, "w") as f:
+            json.dump(data, f)
+    except Exception:
+        pass
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -100,6 +128,10 @@ _NDX100_FALLBACK = [
 ]
 
 def get_sp500() -> list:
+    cached = _cache_get("sp500")
+    if cached:
+        log.info(f"  S&P 500 (cached): {len(cached)} tickers")
+        return cached
     # GitHub-hosted S&P 500 constituents CSV (reliable, no bot detection)
     url = ("https://raw.githubusercontent.com/datasets/s-and-p-500-companies"
            "/main/data/constituents.csv")
@@ -111,6 +143,7 @@ def get_sp500() -> list:
         tickers = [str(t).replace(".", "-") for t in df["Symbol"].dropna()
                    if re.match(r"^[A-Z]{1,5}$", str(t).replace(".", ""))]
         log.info(f"  S&P 500 GitHub: {len(tickers)} tickers")
+        _cache_set("sp500", tickers)
         return tickers
     except Exception as e:
         log.warning(f"SP500 (GitHub) fetch failed: {e}")
@@ -118,6 +151,10 @@ def get_sp500() -> list:
 
 
 def get_nasdaq100() -> list:
+    cached = _cache_get("nasdaq100")
+    if cached:
+        log.info(f"  NASDAQ-100 (cached): {len(cached)} tickers")
+        return cached
     # Wikipedia NASDAQ-100 with retries + fallback to hardcoded list
     try:
         tables = pd.read_html(
@@ -128,6 +165,7 @@ def get_nasdaq100() -> list:
         tickers = tables[0]["Ticker"].dropna().tolist()
         if len(tickers) > 50:
             log.info(f"  NASDAQ-100 Wikipedia: {len(tickers)} tickers")
+            _cache_set("nasdaq100", tickers)
             return tickers
     except Exception:
         pass
@@ -407,75 +445,62 @@ def enrich_with_claude(top_stocks: list) -> list:
         "scores":        s["scores"],
     } for s in top_stocks]
 
-    prompt = f"""Today is {today}. You are a quantitative momentum analyst and expert trader with live web access.
+    # ── Pass 1: Haiku — fast cheap enrichment (catalyst/sector/signals, no web search) ──
+    enrich_prompt = f"""Today is {today}. You are a momentum analyst.
 
-These stocks were algorithmically selected as today's top momentum picks:
+Stocks selected algorithmically today:
+{json.dumps([{{"ticker":s["ticker"],"price":s["price"],"price_change":s["price_change_pct"],
+"vol_ratio":s["vol_ratio"],"above_ema9":s["above_ema9"],"ema9_slope":s["ema9_slope"],
+"atr_pct":s["atr_pct"],"breakout_pct":s["breakout_pct"],"signal":s["signal"]}} for s in stock_data], indent=2)}
 
+Respond ONLY with a JSON array (no markdown, no preamble):
+[{{"ticker":"AAPL","companyName":"Apple Inc.","sector":"Technology",
+"catalyst":"one sentence: likely catalyst or momentum driver based on your knowledge",
+"entryNote":"specific entry condition with price level","keyRisk":"one sentence key risk",
+"activeSignals":["signal 1","signal 2","signal 3"]}}]"""
+
+    enrichments = []
+    try:
+        haiku_resp = client.messages.create(
+            model="claude-haiku-4-5",
+            max_tokens=2000,
+            messages=[{"role": "user", "content": enrich_prompt}],
+        )
+        raw_e = "".join(b.text for b in haiku_resp.content if hasattr(b, "text"))
+        clean_e = raw_e.replace("```json","").replace("```","").strip()
+        enrichments = json.loads(clean_e[clean_e.index("["):clean_e.rindex("]")+1])
+        log.info(f"  Haiku enrichment: {len(enrichments)} stocks")
+    except Exception as e:
+        log.warning(f"Haiku enrichment failed: {e}")
+
+    # ── Pass 2: Sonnet + web search — trade plans only ────────────────────────
+    trade_prompt = f"""Today is {today}. You are an expert momentum trader.
+
+Use web_search to check current price levels and news for each ticker, then generate precise trade plans.
+
+Stock data:
 {json.dumps(stock_data, indent=2)}
 
-Use web_search to find the latest news for each ticker, then respond ONLY with a single JSON object
-(no markdown, no preamble, no extra text) in this exact structure:
+Respond ONLY with a JSON array (no markdown, no preamble). For each stock:
+[{{"ticker":"AAPL","setupType":"Breakout/Flag/EMA bounce/Volume surge","timeHorizon":"Swing (2-5 days)",
+"volumeConfirmation":{{"minimumVolume":"specific threshold","volumePattern":"what to look for","tapeSigns":"tape reading notes"}},
+"entry":{{"triggerPrice":0.0,"triggerCondition":"specific condition","entryType":"Breakout","alternateEntry":"pullback level"}},
+"stopLoss":{{"hardStop":0.0,"hardStopRationale":"why this level","trailingStop":"trailing logic","maxRiskDollars":0,"maxRiskPct":0.0}},
+"targets":[{{"label":"T1","price":0.0,"rationale":"ATR/resistance","riskReward":"X:1","action":"take partial"}},
+           {{"label":"T2","price":0.0,"rationale":"extended target","riskReward":"X:1","action":"take partial"}},
+           {{"label":"T3","price":0.0,"rationale":"full extension","riskReward":"X:1","action":"trail remainder"}}],
+"positionSizing":{{"portfolioRiskPct":1.0,"sharesFor100kAccount":0,"dollarExposure":0,"portfolioPct":0.0}},
+"invalidation":"exact condition that kills setup","additionalNotes":"timing/sector context"}}]
 
-{{
-  "enrichments": [
-    {{
-      "ticker": "AAPL",
-      "companyName": "Apple Inc.",
-      "sector": "Technology",
-      "catalyst": "one sentence: current news catalyst or market driver based on today's news",
-      "entryNote": "specific actionable entry note for a trader today (price levels, conditions)",
-      "keyRisk": "one sentence key risk or reason for caution",
-      "activeSignals": ["signal 1 with specifics", "signal 2", "signal 3"]
-    }}
-  ],
-  "tradePlans": [
-    {{
-      "ticker": "AAPL",
-      "setupType": "Momentum breakout / Flag continuation / EMA bounce / Volume surge",
-      "timeHorizon": "Swing (2-5 days)",
-      "volumeConfirmation": {{
-        "minimumVolume": "Entry bar must show > 2x average 10-day volume (> 120M shares)",
-        "volumePattern": "Look for accelerating volume on 5-min bars as price approaches entry",
-        "tapeSigns": "Watch for large bid stacking at entry level, minimal ask pressure"
-      }},
-      "entry": {{
-        "triggerPrice": 214.50,
-        "triggerCondition": "Break and close above $214.50 (20-day high) on 5-min chart with volume > 1.5x avg",
-        "entryType": "Breakout",
-        "alternateEntry": "Pullback to 9 EMA (~$211.20) on declining volume for lower-risk entry"
-      }},
-      "stopLoss": {{
-        "hardStop": 209.80,
-        "hardStopRationale": "Below 2x ATR from entry and under 9 EMA — momentum invalidated",
-        "trailingStop": "Trail stop to breakeven once T1 hit; trail by 1 ATR below each new daily high",
-        "maxRiskDollars": 470,
-        "maxRiskPct": 2.2
-      }},
-      "targets": [
-        {{"label": "T1", "price": 218.50, "rationale": "1.5x ATR extension", "riskReward": "1.9:1", "action": "Take 40% off, move stop to breakeven"}},
-        {{"label": "T2", "price": 223.00, "rationale": "3x ATR extension", "riskReward": "4.0:1", "action": "Take another 40% off, trail remaining"}},
-        {{"label": "T3", "price": 230.00, "rationale": "Prior resistance / round number", "riskReward": "7.2:1", "action": "Final 20% — let it run"}}
-      ],
-      "positionSizing": {{
-        "portfolioRiskPct": 1.0,
-        "sharesFor100kAccount": 21,
-        "dollarExposure": 4505,
-        "portfolioPct": 4.5
-      }},
-      "invalidation": "Setup fails if price closes below hard stop or volume dries up below 0.8x avg on breakout attempt",
-      "additionalNotes": "Any extra context on timing, news events, sector tailwinds"
-    }}
-  ]
-}}
+Use real ATR values and actual price levels from the data. Be precise — traders will use these numbers."""
 
-Use real ATR values and actual price levels from the data provided. Be precise — traders will use these numbers."""
-
+    trade_plans = []
     try:
-        messages_hist = [{"role": "user", "content": prompt}]
+        messages_hist = [{"role": "user", "content": trade_prompt}]
         while True:
             response = client.messages.create(
                 model="claude-sonnet-4-6",
-                max_tokens=16000,
+                max_tokens=8000,
                 tools=[{"type": "web_search_20250305", "name": "web_search"}],
                 messages=messages_hist,
             )
@@ -484,20 +509,29 @@ Use real ATR values and actual price levels from the data provided. Be precise �
                 break
             if response.stop_reason != "tool_use":
                 break
-        raw = "".join(b.text for b in response.content if hasattr(b, "text"))
+        raw_t = "".join(b.text for b in response.content if hasattr(b, "text"))
+        clean_t = raw_t.replace("```json","").replace("```","").strip()
+        try:
+            trade_plans = json.loads(clean_t[clean_t.index("["):clean_t.rindex("]")+1])
+        except json.JSONDecodeError:
+            # Recover partial results if truncated
+            trade_plans = []
+            depth, obj_start = 0, None
+            start = clean_t.index("[")
+            for i, ch in enumerate(clean_t[start:], start):
+                if ch == "{":
+                    if depth == 1: obj_start = i
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 1 and obj_start is not None:
+                        try: trade_plans.append(json.loads(clean_t[obj_start:i+1]))
+                        except Exception: pass
+                        obj_start = None
+            log.warning(f"Trade plan JSON truncated — recovered {len(trade_plans)} objects")
+        log.info(f"  Sonnet trade plans: {len(trade_plans)} stocks")
     except Exception as e:
-        log.warning(f"Claude enrichment failed: {e}")
-        raw = "{}"
-
-    clean = raw.replace("```json", "").replace("```", "").strip()
-    try:
-        parsed = json.loads(clean[clean.index("{"):clean.rindex("}")+1])
-    except Exception as e:
-        log.warning(f"Claude enrichment JSON parse failed: {e}")
-        parsed = {}
-
-    enrichments = parsed.get("enrichments", [])
-    trade_plans  = parsed.get("tradePlans", [])
+        log.warning(f"Sonnet trade plans failed: {e}")
 
     emap = {e["ticker"]: e for e in enrichments}
     pmap = {p["ticker"]: p for p in trade_plans}
