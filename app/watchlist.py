@@ -492,6 +492,13 @@ Use real ATR values and actual price levels from the data provided. Be precise â
     emap = {e["ticker"]: e for e in enrichments}
     pmap = {p["ticker"]: p for p in trade_plans}
 
+    MA_KEYWORDS = {
+        "acqui", "merger", "acquisition", "takeover", "buyout", "acquired",
+        "tender offer", "going private", "m&a", "deal closed", "deal agreed",
+        "bought by", "purchase agreement", "strategic review", "sale process",
+    }
+
+    filtered = []
     for s in top_stocks:
         e = emap.get(s["ticker"], {})
         s["companyName"]   = e.get("companyName", s["ticker"])
@@ -502,8 +509,18 @@ Use real ATR values and actual price levels from the data provided. Be precise â
         s["activeSignals"] = e.get("activeSignals", [])
         s["tradePlan"]     = pmap.get(s["ticker"], None)
 
+        # Exclude M&A / acquisition targets â€” price is pinned to deal price, not momentum
+        catalyst_lower = s["catalyst"].lower()
+        if any(kw in catalyst_lower for kw in MA_KEYWORDS):
+            log.info(f"  Excluded {s['ticker']} â€” M&A catalyst: {s['catalyst'][:80]}")
+            continue
+        filtered.append(s)
+
+    excluded = len(top_stocks) - len(filtered)
+    if excluded:
+        log.info(f"  Filtered out {excluded} M&A stock(s) â€” {len(filtered)} remain")
     log.info(f"Enriched {len(emap)}/{len(top_stocks)} | Trade plans {len(pmap)}/{len(top_stocks)}")
-    return top_stocks
+    return filtered
 
 
 
