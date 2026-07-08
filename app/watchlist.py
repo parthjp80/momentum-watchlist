@@ -231,15 +231,20 @@ def discover_candidates() -> list:
 
 def passes_liquidity(ticker: str) -> bool:
     """Quick check using fast_info — avoids downloading full history."""
-    try:
-        info = yf.Ticker(ticker).fast_info
-        price = getattr(info, "last_price", None) or getattr(info, "regularMarketPrice", None)
-        vol   = getattr(info, "three_month_average_volume", None)
-        if price is None or vol is None:
+    for attempt in range(3):
+        try:
+            info = yf.Ticker(ticker).fast_info
+            price = getattr(info, "last_price", None) or getattr(info, "regularMarketPrice", None)
+            vol   = getattr(info, "three_month_average_volume", None)
+            if price is None or vol is None:
+                return False
+            return float(price) >= MIN_PRICE and float(vol) >= MIN_AVG_VOL
+        except Exception as e:
+            if "timed out" in str(e).lower() and attempt < 2:
+                time.sleep(1 + attempt)
+                continue
             return False
-        return float(price) >= MIN_PRICE and float(vol) >= MIN_AVG_VOL
-    except Exception:
-        return False
+    return False
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -247,7 +252,8 @@ def passes_liquidity(ticker: str) -> bool:
 # ════════════════════════════════════════════════════════════════════════════
 
 def fetch_ticker_data(ticker: str) -> dict | None:
-    try:
+    for attempt in range(3):
+     try:
         df = yf.download(ticker, period="60d", interval="1d",
                          auto_adjust=True, progress=False, actions=False)
         if df.empty or len(df) < 15:
@@ -326,9 +332,13 @@ def fetch_ticker_data(ticker: str) -> dict | None:
             "low_52w":          round(low_52w, 2),
             "recent_returns":   [round(float(r), 5) for r in returns.tail(20).tolist()],
         }
-    except Exception as e:
+     except Exception as e:
+        if "timed out" in str(e).lower() and attempt < 2:
+            time.sleep(1 + attempt)
+            continue
         log.debug(f"{ticker}: {e}")
         return None
+    return None
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -598,7 +608,7 @@ def run():
     cap = candidates[: MAX_CANDIDATES * 3]
     liquid_set = set()
     liquid = []
-    with ThreadPoolExecutor(max_workers=20) as ex:
+    with ThreadPoolExecutor(max_workers=10) as ex:
         futs = {ex.submit(passes_liquidity, t): t for t in cap}
         done = 0
         for fut in as_completed(futs):
@@ -615,7 +625,7 @@ def run():
     # 3+4. Score — parallel with 15 workers
     log.info(f"\n=== STAGE 3+4: Scoring {len(liquid)} candidates ===")
     results = []
-    with ThreadPoolExecutor(max_workers=15) as ex:
+    with ThreadPoolExecutor(max_workers=10) as ex:
         futs = {ex.submit(fetch_ticker_data, t): t for t in liquid}
         done = 0
         for fut in as_completed(futs):
