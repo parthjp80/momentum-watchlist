@@ -506,6 +506,12 @@ Use real ATR values and actual price levels from the data provided. Be precise �
         "acqui", "merger", "acquisition", "takeover", "buyout", "acquired",
         "tender offer", "going private", "m&a", "deal closed", "deal agreed",
         "bought by", "purchase agreement", "strategic review", "sale process",
+        "to be acquired", "definitive agreement", "all-cash deal", "all cash deal",
+        "shareholders to receive", "per share in cash", "cash consideration",
+        "pending acquisition", "pending merger", "subject to regulatory",
+        "shareholder approval", "special meeting", "privatization",
+        "take-private", "take private", "leveraged buyout", "lbo",
+        "memorandum of understanding", "mou", "letter of intent", "loi",
     }
 
     filtered = []
@@ -519,10 +525,18 @@ Use real ATR values and actual price levels from the data provided. Be precise �
         s["activeSignals"] = e.get("activeSignals", [])
         s["tradePlan"]     = pmap.get(s["ticker"], None)
 
-        # Exclude M&A / acquisition targets — price is pinned to deal price, not momentum
-        catalyst_lower = s["catalyst"].lower()
-        if any(kw in catalyst_lower for kw in MA_KEYWORDS):
-            log.info(f"  Excluded {s['ticker']} — M&A catalyst: {s['catalyst'][:80]}")
+        # Exclude M&A / acquisition targets — check ALL text fields
+        # Price gets pinned to deal price on announcement; no momentum upside
+        all_text = " ".join([
+            s["catalyst"],
+            s["keyRisk"],
+            s["entryNote"],
+            " ".join(s["activeSignals"]),
+        ]).lower()
+
+        if any(kw in all_text for kw in MA_KEYWORDS):
+            matched = next(kw for kw in MA_KEYWORDS if kw in all_text)
+            log.info(f"  Excluded {s['ticker']} — M&A keyword '{matched}' in enrichment text")
             continue
         filtered.append(s)
 
