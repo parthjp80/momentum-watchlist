@@ -414,7 +414,18 @@ def score_stock(d: dict) -> dict:
     signal  = ("strong" if overall >= 75 else "good" if overall >= 60
                else "watch" if overall >= 45 else "weak")
 
-    return {**d, "scores": scores, "overall_score": overall, "signal": signal}
+    # Pre-breakout detection: within 3% below 20-day high, volume building, EMA rising
+    bp = d["breakout_pct"]
+    approaching_breakout = (
+        -3.0 <= bp < 0           # within 3% below 20d high, not yet broken out
+        and d["vol_ratio"] >= 1.2  # volume picking up
+        and d["above_ema9"]        # price above 9 EMA
+        and d["ema9_slope"] > 0    # EMA sloping up
+        and d["mod_sharpe"] > 0    # positive momentum
+    )
+
+    return {**d, "scores": scores, "overall_score": overall, "signal": signal,
+            "approaching_breakout": approaching_breakout}
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -477,6 +488,10 @@ Respond ONLY with a JSON array (no markdown, no preamble):
     trade_prompt = f"""Today is {today}. You are an expert momentum trader.
 
 Use web_search to check current price levels and news for each ticker, then generate precise trade plans.
+
+IMPORTANT: Stocks with signal="pre-breakout" are approaching but have NOT yet broken their 20-day high.
+For these, frame the entry as an ANTICIPATION entry (buy the approach, not the breakout confirmation)
+with a tight stop below the 9 EMA. Set T1 at the 20-day high, then extended targets beyond.
 
 Stock data:
 {json.dumps(stock_data, indent=2)}
@@ -689,8 +704,27 @@ def run():
         return
 
     results.sort(key=lambda x: x["overall_score"], reverse=True)
+
+    # Top momentum stocks
     top = results[:TOP_N]
+
+    # Pre-breakout candidates: approaching 20d high, not already in top list
+    top_tickers = {s["ticker"] for s in top}
+    pre_breakout = [
+        s for s in results
+        if s.get("approaching_breakout") and s["ticker"] not in top_tickers
+    ]
+    # Sort by closest to breakout level (highest breakout_pct = closest to 0)
+    pre_breakout.sort(key=lambda x: x["breakout_pct"], reverse=True)
+    pre_breakout = pre_breakout[:3]
+
+    for s in pre_breakout:
+        s["signal"] = "pre-breakout"
+
+    combined = top + pre_breakout
     log.info(f"\nTop {TOP_N}: {[(s['ticker'], s['overall_score']) for s in top]}")
+    if pre_breakout:
+        log.info(f"Pre-breakout: {[(s['ticker'], round(s['breakout_pct'],1)) for s in pre_breakout]}")
 
     scan_stats = {
         "universe": len(candidates),
@@ -700,12 +734,12 @@ def run():
     }
 
     # 5. Enrich + trade plans (single combined call)
-    log.info("\n=== STAGE 5: Claude AI enrichment + trade plans ===")
-    top = enrich_with_claude(top)
+    log.info(f"\n=== STAGE 5: Claude AI enrichment + trade plans ({len(combined)} stocks) ===")
+    combined = enrich_with_claude(combined)
 
     # 6. Email
     log.info("\n=== STAGE 6: Sending email ===")
-    send_email(top, scan_stats)
+    send_email(combined, scan_stats)
     log.info("\n✓ Complete.")
 
 
