@@ -547,8 +547,8 @@ Use real ATR values and actual price levels from the data. Be precise — trader
     except Exception as e:
         log.warning(f"Sonnet trade plans failed: {e}")
 
-    emap = {e["ticker"]: e for e in enrichments}
-    pmap = {p["ticker"]: p for p in trade_plans}
+    emap = {e["ticker"]: e for e in enrichments if isinstance(e, dict) and "ticker" in e}
+    pmap = {p["ticker"]: p for p in trade_plans if isinstance(p, dict) and "ticker" in p}
 
     MA_KEYWORDS = {
         "acqui", "merger", "acquisition", "takeover", "buyout", "acquired",
