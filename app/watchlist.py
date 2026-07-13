@@ -114,17 +114,18 @@ def _cache_set(key: str, data: list) -> None:
 # ════════════════════════════════════════════════════════════════════════════
 
 # NASDAQ-100 components (as of Q2 2026 rebalance) — fallback if live fetch fails
+# NASDAQ-100 components as of July 2026 — used directly (Wikipedia 403s in Docker)
 _NDX100_FALLBACK = [
     "AAPL","MSFT","NVDA","AMZN","META","TSLA","GOOGL","GOOG","AVGO","COST",
     "NFLX","TMUS","AMD","PEP","LIN","CSCO","ADBE","QCOM","TXN","AMGN",
     "INTU","ISRG","CMCSA","BKNG","MU","HON","AMAT","VRTX","ADP","PANW",
-    "SBUX","ADI","GILD","LRCX","MELI","MDLZ","INTC","REGN","KLAC","SNPS",
-    "CDNS","CEG","CTAS","PYPL","CSX","ORLY","MRNA","NXPI","MRVL","PCAR",
-    "ABNB","FTNT","CRWD","MNST","KDP","ODFL","ROST","IDXX","DXCM","FAST",
-    "AZN","CTSH","EA","WBD","BIIB","FANG","GEHC","ON","EXC","XEL",
-    "TEAM","ZS","ANSS","VRSK","DLTR","DDOG","CSGP","GFS","TTD","TTWO",
-    "SIRI","ILMN","WBA","ALGN","LCID","ENPH","ZM","RIVN","DASH","EBAY",
-    "MCHP","CPRT","PAYX","CHTR","PDD","ASML","ARM","CCEP","CDW","SMCI",
+    "SBUX","ADI","GILD","LRCX","MELI","MDLZ","REGN","KLAC","SNPS","CDNS",
+    "CEG","CTAS","PYPL","CSX","ORLY","NXPI","MRVL","PCAR","ABNB","FTNT",
+    "CRWD","MNST","KDP","ODFL","ROST","IDXX","DXCM","FAST","AZN","CTSH",
+    "EA","GEHC","ON","EXC","XEL","TEAM","ZS","ANSS","VRSK","DDOG",
+    "CSGP","TTD","TTWO","DASH","EBAY","MCHP","CPRT","PAYX","CHTR","PDD",
+    "ASML","ARM","CCEP","CDW","SMCI","APP","PLTR","COIN","HOOD","RBLX",
+    "MSTR","OKTA","ZM","FANG","WBD","DLTR","BIIB","ILMN","MRNA","ENPH",
 ]
 
 def get_sp500() -> list:
@@ -151,25 +152,8 @@ def get_sp500() -> list:
 
 
 def get_nasdaq100() -> list:
-    cached = _cache_get("nasdaq100")
-    if cached:
-        log.info(f"  NASDAQ-100 (cached): {len(cached)} tickers")
-        return cached
-    # Wikipedia NASDAQ-100 with retries + fallback to hardcoded list
-    try:
-        tables = pd.read_html(
-            "https://en.wikipedia.org/wiki/Nasdaq-100",
-            attrs={"id": "constituents"},
-            storage_options={"User-Agent": HEADERS["User-Agent"]},
-        )
-        tickers = tables[0]["Ticker"].dropna().tolist()
-        if len(tickers) > 50:
-            log.info(f"  NASDAQ-100 Wikipedia: {len(tickers)} tickers")
-            _cache_set("nasdaq100", tickers)
-            return tickers
-    except Exception:
-        pass
-    log.warning("NASDAQ-100 Wikipedia failed — using hardcoded fallback list")
+    # Wikipedia 403s inside Docker — use the hardcoded list directly (updated quarterly)
+    log.info(f"  NASDAQ-100 (built-in): {len(_NDX100_FALLBACK)} tickers")
     return _NDX100_FALLBACK
 
 
