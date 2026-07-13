@@ -441,18 +441,33 @@ def enrich_with_claude(top_stocks: list) -> list:
     } for s in top_stocks]
 
     # ── Pass 1: Haiku — fast cheap enrichment (catalyst/sector/signals, no web search) ──
+    enrich_summary = json.dumps([{
+        "ticker":       s["ticker"],
+        "price":        s["price"],
+        "price_change": s["price_change"],
+        "vol_ratio":    s["vol_ratio"],
+        "above_ema9":   s["above_ema9"],
+        "ema9_slope":   s["ema9_slope"],
+        "atr_pct":      s["atr_pct"],
+        "breakout_pct": s["breakout_pct"],
+        "signal":       s["signal"],
+    } for s in stock_data], indent=2)
+
+    enrich_schema = json.dumps([{
+        "ticker": "AAPL", "companyName": "Apple Inc.", "sector": "Technology",
+        "catalyst": "one sentence: likely catalyst or momentum driver based on your knowledge",
+        "entryNote": "specific entry condition with price level",
+        "keyRisk": "one sentence key risk",
+        "activeSignals": ["signal 1", "signal 2", "signal 3"],
+    }], indent=2)
+
     enrich_prompt = f"""Today is {today}. You are a momentum analyst.
 
 Stocks selected algorithmically today:
-{json.dumps([{{"ticker":s["ticker"],"price":s["price"],"price_change":s["price_change"],
-"vol_ratio":s["vol_ratio"],"above_ema9":s["above_ema9"],"ema9_slope":s["ema9_slope"],
-"atr_pct":s["atr_pct"],"breakout_pct":s["breakout_pct"],"signal":s["signal"]}} for s in stock_data], indent=2)}
+{enrich_summary}
 
-Respond ONLY with a JSON array (no markdown, no preamble):
-[{{"ticker":"AAPL","companyName":"Apple Inc.","sector":"Technology",
-"catalyst":"one sentence: likely catalyst or momentum driver based on your knowledge",
-"entryNote":"specific entry condition with price level","keyRisk":"one sentence key risk",
-"activeSignals":["signal 1","signal 2","signal 3"]}}]"""
+Respond ONLY with a JSON array (no markdown, no preamble) matching this structure:
+{enrich_schema}"""
 
     enrichments = []
     try:
