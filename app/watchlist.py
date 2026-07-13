@@ -473,12 +473,29 @@ Respond ONLY with a JSON array (no markdown, no preamble) matching this structur
     try:
         haiku_resp = client.messages.create(
             model="claude-haiku-4-5",
-            max_tokens=2000,
+            max_tokens=4000,
             messages=[{"role": "user", "content": enrich_prompt}],
         )
         raw_e = "".join(b.text for b in haiku_resp.content if hasattr(b, "text"))
         clean_e = raw_e.replace("```json","").replace("```","").strip()
-        enrichments = json.loads(clean_e[clean_e.index("["):clean_e.rindex("]")+1])
+        try:
+            enrichments = json.loads(clean_e[clean_e.index("["):clean_e.rindex("]")+1])
+        except json.JSONDecodeError:
+            # Truncated — recover complete objects one by one
+            enrichments = []
+            start = clean_e.index("[")
+            depth, obj_start = 0, None
+            for i, ch in enumerate(clean_e[start:], start):
+                if ch == "{":
+                    if depth == 1: obj_start = i
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 1 and obj_start is not None:
+                        try: enrichments.append(json.loads(clean_e[obj_start:i+1]))
+                        except Exception: pass
+                        obj_start = None
+            log.warning(f"Haiku JSON truncated — recovered {len(enrichments)} objects")
         log.info(f"  Haiku enrichment: {len(enrichments)} stocks")
     except Exception as e:
         log.warning(f"Haiku enrichment failed: {e}")
