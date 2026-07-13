@@ -444,7 +444,7 @@ def enrich_with_claude(top_stocks: list) -> list:
     enrich_prompt = f"""Today is {today}. You are a momentum analyst.
 
 Stocks selected algorithmically today:
-{json.dumps([{{"ticker":s["ticker"],"price":s["price"],"price_change":s["price_change_pct"],
+{json.dumps([{{"ticker":s["ticker"],"price":s["price"],"price_change":s["price_change"],
 "vol_ratio":s["vol_ratio"],"above_ema9":s["above_ema9"],"ema9_slope":s["ema9_slope"],
 "atr_pct":s["atr_pct"],"breakout_pct":s["breakout_pct"],"signal":s["signal"]}} for s in stock_data], indent=2)}
 
