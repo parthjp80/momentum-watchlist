@@ -289,7 +289,14 @@ def fetch_ticker_data(ticker: str) -> dict | None:
         if len(closes) < 10:
             return None
 
-        price = float(closes.iloc[-1])
+        # Use last daily close for calculations, but fetch live price via fast_info
+        bar_close = float(closes.iloc[-1])
+        try:
+            info       = yf.Ticker(ticker).fast_info
+            live_price = getattr(info, "last_price", None) or getattr(info, "regularMarketPrice", None)
+            price      = float(live_price) if live_price else bar_close
+        except Exception:
+            price = bar_close
         if price < MIN_PRICE:
             return None
 
