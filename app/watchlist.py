@@ -548,6 +548,8 @@ Use real ATR values and actual price levels from the data. Be precise — trader
             if response.stop_reason != "tool_use":
                 break
         raw_t = "".join(b.text for b in response.content if hasattr(b, "text"))
+        log.info(f"  Trade plan raw response length: {len(raw_t)} chars")
+        log.debug(f"  Trade plan raw (first 500): {raw_t[:500]}")
         clean_t = raw_t.replace("```json","").replace("```","").strip()
         try:
             trade_plans = json.loads(clean_t[clean_t.index("["):clean_t.rindex("]")+1])
@@ -573,6 +575,9 @@ Use real ATR values and actual price levels from the data. Be precise — trader
 
     emap = {e["ticker"]: e for e in enrichments if isinstance(e, dict) and "ticker" in e}
     pmap = {p["ticker"]: p for p in trade_plans if isinstance(p, dict) and "ticker" in p}
+    log.info(f"  emap tickers: {list(emap.keys())}")
+    log.info(f"  pmap tickers: {list(pmap.keys())}")
+    log.info(f"  stock tickers: {[s['ticker'] for s in top_stocks]}")
 
     MA_KEYWORDS = {
         "acqui", "merger", "acquisition", "takeover", "buyout", "acquired",
