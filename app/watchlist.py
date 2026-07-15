@@ -538,7 +538,7 @@ Use real ATR values and actual price levels from the data. Be precise — trader
         while True:
             response = client.messages.create(
                 model="claude-sonnet-4-6",
-                max_tokens=8000,
+                max_tokens=16000,
                 tools=[{"type": "web_search_20250305", "name": "web_search"}],
                 messages=messages_hist,
             )
@@ -553,22 +553,33 @@ Use real ATR values and actual price levels from the data. Be precise — trader
         clean_t = raw_t.replace("```json","").replace("```","").strip()
         try:
             trade_plans = json.loads(clean_t[clean_t.index("["):clean_t.rindex("]")+1])
-        except json.JSONDecodeError:
-            # Recover partial results if truncated
+        except (json.JSONDecodeError, ValueError):
+            # Truncated — recover top-level objects only (depth==1 inside the outer array)
             trade_plans = []
-            depth, obj_start = 0, None
-            start = clean_t.index("[")
-            for i, ch in enumerate(clean_t[start:], start):
-                if ch == "{":
-                    if depth == 1: obj_start = i
-                    depth += 1
-                elif ch == "}":
-                    depth -= 1
-                    if depth == 1 and obj_start is not None:
-                        try: trade_plans.append(json.loads(clean_t[obj_start:i+1]))
-                        except Exception: pass
-                        obj_start = None
-            log.warning(f"Trade plan JSON truncated — recovered {len(trade_plans)} objects")
+            try:
+                start = clean_t.index("[")
+                depth, obj_start = 0, None
+                for i, ch in enumerate(clean_t[start:], start):
+                    if ch == "[" and i == start:
+                        depth = 1  # we are now inside the outer array
+                        continue
+                    if ch == "{":
+                        if depth == 1:
+                            obj_start = i  # start of a top-level stock object
+                        depth += 1
+                    elif ch == "}":
+                        depth -= 1
+                        if depth == 1 and obj_start is not None:
+                            try:
+                                obj = json.loads(clean_t[obj_start:i+1])
+                                if isinstance(obj, dict) and "ticker" in obj:
+                                    trade_plans.append(obj)
+                            except Exception:
+                                pass
+                            obj_start = None
+            except Exception as recover_err:
+                log.warning(f"Trade plan recovery failed: {recover_err}")
+            log.warning(f"Trade plan JSON truncated — recovered {len(trade_plans)} top-level objects")
         log.info(f"  Sonnet trade plans: {len(trade_plans)} stocks")
     except Exception as e:
         log.warning(f"Sonnet trade plans failed: {e}")
