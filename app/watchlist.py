@@ -476,12 +476,25 @@ Stocks selected algorithmically today:
 Respond ONLY with a JSON array (no markdown, no preamble) matching this structure:
 {enrich_schema}"""
 
+    # Static instruction block (cached) + dynamic stock data block
+    enrich_static = f"""You are a momentum analyst. Respond ONLY with a JSON array (no markdown, no preamble) matching this structure:
+{enrich_schema}
+
+Rules: one sentence for catalyst/keyRisk/entryNote; activeSignals must be specific with numbers."""
+
     enrichments = []
     try:
         haiku_resp = client.messages.create(
             model="claude-haiku-4-5",
             max_tokens=4000,
-            messages=[{"role": "user", "content": enrich_prompt}],
+            messages=[{"role": "user", "content": [
+                # Static block — gets cached after first call (~10% cost on repeat runs)
+                {"type": "text", "text": enrich_static,
+                 "cache_control": {"type": "ephemeral"}},
+                # Dynamic block — stock data changes every run, not cached
+                {"type": "text", "text": f"Today is {today}. Stocks selected algorithmically:\n{enrich_summary}"},
+            ]}],
+            betas=["prompt-caching-2024-07-31"],
         )
         raw_e = "".join(b.text for b in haiku_resp.content if hasattr(b, "text"))
         clean_e = raw_e.replace("```json","").replace("```","").strip()
@@ -508,39 +521,22 @@ Respond ONLY with a JSON array (no markdown, no preamble) matching this structur
         log.warning(f"Haiku enrichment failed: {e}")
 
     # ── Pass 2: Sonnet + web search — trade plans only ────────────────────────
-    trade_prompt = f"""Today is {today}. You are an expert momentum trader.
-
-Use web_search to check current price levels and news for each ticker, then generate precise trade plans.
-
-IMPORTANT: Stocks with signal="pre-breakout" are approaching but have NOT yet broken their 20-day high.
-For these, frame the entry as an ANTICIPATION entry (buy the approach, not the breakout confirmation)
-with a tight stop below the 9 EMA. Set T1 at the 20-day high, then extended targets beyond.
-
-Stock data:
-{json.dumps(stock_data, indent=2)}
-
-Respond ONLY with a JSON array (no markdown, no preamble). For each stock:
-[{{"ticker":"AAPL","setupType":"Breakout/Flag/EMA bounce/Volume surge","timeHorizon":"Swing (2-5 days)",
-"volumeConfirmation":{{"minimumVolume":"specific threshold","volumePattern":"what to look for","tapeSigns":"tape reading notes"}},
-"entry":{{"triggerPrice":0.0,"triggerCondition":"specific condition","entryType":"Breakout","alternateEntry":"pullback level"}},
-"stopLoss":{{"hardStop":0.0,"hardStopRationale":"why this level","trailingStop":"trailing logic","maxRiskDollars":0,"maxRiskPct":0.0}},
-"targets":[{{"label":"T1","price":0.0,"rationale":"ATR/resistance","riskReward":"X:1","action":"take partial"}},
-           {{"label":"T2","price":0.0,"rationale":"extended target","riskReward":"X:1","action":"take partial"}},
-           {{"label":"T3","price":0.0,"rationale":"full extension","riskReward":"X:1","action":"trail remainder"}}],
-"positionSizing":{{"portfolioRiskPct":1.0,"sharesFor100kAccount":0,"dollarExposure":0,"portfolioPct":0.0}},
-"invalidation":"exact condition that kills setup","additionalNotes":"timing/sector context"}}]
-
-Use real ATR values and actual price levels from the data. Be precise — traders will use these numbers."""
-
     trade_plans = []
     try:
-        messages_hist = [{"role": "user", "content": trade_prompt}]
+        messages_hist = [{"role": "user", "content": [
+            # Static block — cached after first call
+            {"type": "text", "text": trade_static,
+             "cache_control": {"type": "ephemeral"}},
+            # Dynamic block — stock data, not cached
+            {"type": "text", "text": f"Today is {today}. Stock data:\n{json.dumps(stock_data, indent=2)}"},
+        ]}]
         while True:
             response = client.messages.create(
                 model="claude-sonnet-4-6",
                 max_tokens=16000,
                 tools=[{"type": "web_search_20250305", "name": "web_search"}],
                 messages=messages_hist,
+                betas=["prompt-caching-2024-07-31"],
             )
             messages_hist.append({"role": "assistant", "content": response.content})
             if response.stop_reason in ("end_turn", None):
